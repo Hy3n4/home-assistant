@@ -2,7 +2,7 @@
 import asyncio
 import logging
 from datetime import timedelta
-from typing import Any, Dict, List, Optional  # noqa  pylint_disable=unused-import
+from typing import Any, Dict, List, Set, Optional  # noqa  pylint_disable=unused-import
 
 from homeassistant.core import HomeAssistant, callback, State, CoreState
 from homeassistant.const import (
@@ -27,15 +27,16 @@ STATE_DUMP_INTERVAL = timedelta(minutes=15)
 class RestoreStateData():
     """Helper class for managing the helper saved data."""
 
-    @staticmethod
-    async def async_get_instance(hass: HomeAssistant) -> 'RestoreStateData':
+    @classmethod
+    async def async_get_instance(
+            cls, hass: HomeAssistant) -> 'RestoreStateData':
         """Get the singleton instance of this data helper."""
         task = hass.data.get(DATA_RESTORE_STATE_TASK)
 
         if task is None:
             async def load_instance(hass: HomeAssistant) -> 'RestoreStateData':
                 """Set up the restore state helper."""
-                data = RestoreStateData(hass)
+                data = cls(hass)
 
                 try:
                     states = await data.store.async_load()
@@ -72,17 +73,15 @@ class RestoreStateData():
         self.store = Store(hass, STORAGE_VERSION, STORAGE_KEY,
                            encoder=JSONEncoder)  # type: Store
         self.last_states = {}  # type: Dict[str, State]
-        self.entities = []  # type: List[RestoreEntity]
+        self.entity_ids = set()  # type: Set[str]
 
     async def async_dump_states(self) -> None:
         """Save the current state machine to storage."""
         _LOGGER.debug("Dumping states")
-        # Entity ID set of registered restorable entities to dump
-        entity_ids = set(entity.entity_id for entity in self.entities)
         try:
             await self.store.async_save([
                 state.as_dict() for state in self.hass.states.async_all()
-                if state.entity_id in entity_ids])
+                if state.entity_id in self.entity_ids])
         except HomeAssistantError as exc:
             _LOGGER.error("Error saving current states", exc_info=exc)
 
@@ -108,13 +107,13 @@ class RestoreStateData():
     def async_register_entity(
             self, entity: 'RestoreEntity') -> None:
         """Store this entity's state when hass is shutdown."""
-        self.entities.append(entity)
+        self.entity_ids.add(entity.entity_id)
 
     @callback
     def async_unregister_entity(
             self, entity: 'RestoreEntity') -> None:
         """Unregister this entity from saving state."""
-        self.entities.remove(entity)
+        self.entity_ids.remove(entity.entity_id)
 
 
 class RestoreEntity(Entity):
